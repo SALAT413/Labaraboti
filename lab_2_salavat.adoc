@@ -2,6 +2,7 @@
 :toc: macro
 :toc-title: Оглавление
 
+include::Titulnik_salavat.adoc[]
 
 toc::[]
 == Введение

@@ -1,3 +1,5 @@
+[source,cpp]
+----
 #include <iostream> 
 #include "rccregisters.hpp"
 #include "gpioaregisters.hpp"
@@ -63,3 +65,4 @@ int main()
 }
 
 image:светодиод.jpg[]
+----

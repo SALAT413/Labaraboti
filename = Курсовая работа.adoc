@@ -545,6 +545,245 @@ image::архитектура.png[width=1000px, align="center"]
 
 Главная задача MeasurementTask запускает измерение каждые 50 мс. АЦП выдает сырое напряжение в виде кода отправляет в VoltagePerevod. Тот переводит его в напряжение и отправляет дальше в FilteredVoltage. FilteredVoltage, в свою очередь, кладет отфильтрованное значение в LedMailBox и UARTMailBox. Дальше VoltageRange считывает проценты напряжения ,а LEDDriver уже переводит эти проценты в необходимое количество включенных светодиодов. После полученного напряжения UartMailBox передает его в BluetoothReporterTask и отправляет строку, переведенную через форматор в USART2Driver.
 
+=== ADCDriver
+
+**Назначение:** Драйвер АЦП (Analog-to-Digital Converter)
+
+**Что делает:**
+- Инициализирует ADC1 для измерения напряжения на входе PA0
+- Настраивает DMA2 для автоматической передачи данных
+- Возвращает сырой цифровой код (0-4095) с АЦП
+
+**Методы:**
+- `Init()` - настройка ADC, DMA, GPIO
+- `GetValue()` - возвращает сырой код АЦП (0-4095)
+
+.ADCDriver
+image::ADCDriver.png[width=300px, align="center"]
+
+---
+
+=== VoltagePerevod
+
+**Назначение:** Преобразование сырого кода АЦП в напряжение
+
+**Что делает:**
+- Принимает сырой код (0-4095) от ADCDriver
+- Преобразует в напряжение по формуле: `code * 3.3 / 4095`
+- Возвращает напряжение в вольтах (0-3.3V)
+
+**Методы:**
+- `Convert(adcCode)` - преобразование кода в напряжение
+
+.VoltagePerevod
+image::VoltagePerevod.png[width=300px, align="center"]
+
+---
+
+=== FilteredVoltage
+
+**Назначение:** Фильтр нижних частот для сглаживания сигнала
+
+**Что делает:**
+- Принимает сырое напряжение с АЦП
+- Сглаживает шумы и выбросы через цифровой RC-фильтр
+- Возвращает стабильное отфильтрованное значение
+
+**Методы:**
+- `FilteredVoltage(tau)` - конструктор, инициализация фильтра
+- `Update(rawVoltage)` - обновление фильтра новым значением
+- `GetValue()` - получение отфильтрованного напряжения
+- `Reset()` - сброс фильтра в начальное состояние
+
+**Формула фильтра:** `filtered = filtered + (raw - filtered) * tau`
+
+.FilteredVoltage
+image::FilteredVoltage.png[width=300px, align="center"]
+
+---
+
+=== VoltageRange (enum)
+
+**Назначение:** Перечисление уровней напряжения
+
+**Значения:**
+- `LEVEL_0` - 0-25% напряжения (1 LED)
+- `LEVEL_1` - 25-50% напряжения (2 LED)
+- `LEVEL_2` - 50-75% напряжения (3 LED)
+- `LEVEL_3` - 75-100% напряжения (4 LED)
+
+.VoltageRange
+image::VoltageRange.png[width=300px, align="center"]
+
+---
+
+=== LEDDriver
+
+**Назначение:** Драйвер светодиодной линейки (4 LED)
+
+**Что делает:**
+- Инициализирует GPIO пины для 4 светодиодов (PA5, PC9, PC8, PC5)
+- Управляет включением/выключением каждого светодиода
+- Включает нужное количество светодиодов в зависимости от уровня напряжения
+
+**Схема светодиодов:**
+- LED1 (PA5) - горит при 0-25% напряжения
+- LED2 (PC9) - горит при 25-50%
+- LED3 (PC8) - горит при 50-75%
+- LED4 (PC5) - горит при 75-100%
+
+**Методы:**
+- `Init()` - настройка GPIO пинов как выходов
+- `SetLED(index, state)` - включить/выключить конкретный LED
+- `SetAll(state)` - управление всеми LED сразу
+- `SetCount(count)` - включить count LED (1-4)
+
+.LEDDriver
+image::LEDDriver.png[width=300px, align="center"]
+
+---
+
+=== Formatter
+
+**Назначение:** Форматирование строк для отправки по Bluetooth
+
+**Что делает:**
+- Преобразует число (напряжение) в строку
+- Форматирует строку по шаблону "Voltage: X.XXX V\r\n"
+- Подготавливает данные для отправки через UART
+
+**Методы:**
+- `Format(voltage, buffer, bufferSize)` - форматирование строки
+
+.Formator
+image::Formator.png[width=300px, align="center"]
+
+---
+
+=== USART2Driver
+
+**Назначение:** Драйвер UART для Bluetooth модуля HC-06
+
+**Что делает:**
+- Инициализирует USART2 на пинах PA2 (TX) и PA3 (RX)
+- Отправляет данные по последовательному интерфейсу
+- Передаёт отформатированное напряжение на Bluetooth модуль
+
+**Методы:**
+- `Init(baudrate)` - настройка UART, GPIO, скорости 9600
+- `SendChar(c)` - отправка одного символа
+- `SendString(str)` - отправка строки
+
+.USART2Driver
+image::USART2Driver.png[width=300px, align="center"]
+
+---
+
+=== MeasurementTask
+
+**Назначение:** Главная задача измерения напряжения (приоритет 2)
+
+**Что делает:**
+- Ожидает сигнал от таймера TIM2 каждые 50 мс
+- Читает сырой код с АЦП через ADCDriver
+- Преобразует код в напряжение через VoltagePerevod
+- Фильтрует напряжение через FilteredVoltage
+- Отправляет отфильтрованное значение в очереди для других задач
+
+**Атрибуты:**
+- `m_filter` - объект фильтра FilteredVoltage
+- `m_lastRawVoltage` - последнее сырое напряжение
+- `m_lastFilteredVoltage` - последнее отфильтрованное напряжение
+- `s_ledMailBox` - очередь для LEDIndicatorTask
+- `s_uartMailBox` - очередь для BluetoothReporterTask
+
+**Методы:**
+- `MeasurementTask()` - конструктор
+- `Execute()` - основной цикл задачи
+- `ProcessVoltage(rawVoltage)` - применение фильтра
+- `InitTimer()` - инициализация таймера TIM2
+
+.MeasurementTask
+image::MeasurementTask.png[width=300px, align="center"]
+
+---
+
+=== LEDIndicatorTask
+
+**Назначение:** Задача управления светодиодами (приоритет 1)
+
+**Что делает:**
+- Ожидает новые данные из очереди s_ledMailBox
+- Получает отфильтрованное напряжение
+- Вычисляет уровень через VoltageRangeCalculator
+- Включает нужное количество светодиодов через LEDDriver
+
+**Методы:**
+- `Execute()` - основной цикл задачи
+- `UpdateLEDs(voltage)` - обновление светодиодов
+
+.LEDIndicatorTask
+image::LEDIndicatorTask.png[width=300px, align="center"]
+
+---
+
+=== BluetoothReporterTask
+
+**Назначение:** Задача отправки данных по Bluetooth (приоритет 0)
+
+**Что делает:**
+- Ожидает новые данные из очереди s_uartMailBox
+- Получает отфильтрованное напряжение
+- Форматирует строку через Formator
+- Отправляет строку через USART2Driver на модуль HC-06
+
+**Методы:**
+- `Execute()` - основной цикл задачи
+- `ReportVoltage(voltage)` - форматирование и отправка
+
+.BluetoothReporterTask
+image::BluetoothReporterTask.png[width=300px, align="center"]
+
+---
+
+=== LedMailBox (очередь)
+
+**Тип:** `QueueHandle_t` (статическая переменная в MeasurementTask)
+
+**Назначение:** передача отфильтрованного напряжения из MeasurementTask в LEDIndicatorTask
+
+**Параметры:**
+- Размер очереди: 10 элементов
+- Тип данных: `float`
+
+**Операции:**
+- `xQueueCreate(10, sizeof(float))` - создание
+- `xQueueSend(s_ledMailBox, &value, 0)` - отправка
+- `xQueueReceive(s_ledMailBox, &value, portMAX_DELAY)` - получение
+
+.LedMailBox
+image::LedMailBox.png[width=300px, align="center"]
+
+---
+
+=== UARTMailBox (очередь)
+
+**Тип:** `QueueHandle_t` (статическая переменная в MeasurementTask)
+
+**Назначение:** передача отфильтрованного напряжения из MeasurementTask в BluetoothReporterTask
+
+**Параметры:**
+- Размер очереди: 10 элементов
+- Тип данных: `float`
+
+**Операции:**
+- `xQueueCreate(10, sizeof(float))` - создание
+- `xQueueSend(s_uartMailBox, &value, 0)` - отправка
+- `xQueueReceive(s_uartMailBox, &value, pdMS_TO_TICKS(100))` - получение
+
+.UARTMailBox
+image::UARTMailBox.png[width=300px, align="center"]
+
 == Настройка периферийных регистров
 
 В данном разделе подробно рассматривается конфигурация регистров микроконтроллера STM32F411RE, используемых в проекте. Каждый регистр и каждый бит сопровождается пояснением: почему выбрано именно такое значение и как это влияет на работу устройства.

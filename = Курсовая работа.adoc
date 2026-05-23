@@ -17,6 +17,7 @@ toc::[]
 == Требования к разработке
 
 .Требования к курсовому проекту
+
 * Для разработки должна использоваться отладочная плата https://www.waveshare.com/product/arduino-2/boards-kits/nucleo/xnucleo-f411re.htm[XNUCLEO-F411RE]
 * Софт должен измерять напряжения с переменного резистора, уставленного на плате расширения
 ** Для измерения напряжения должен использоваться встроенный АЦП
@@ -103,10 +104,11 @@ B = \frac{V_1 \cdot N_2 - V_2 \cdot N_1}{N_2 - N_1}
 
 ==== Анализ погрешностей измерительного канала
 
-Требуемая точность: не менее **0,01 В (10 мВ)**.
+Требуемая точность - не менее **0,01 В (10 мВ)**.
 
 **1. Погрешность квантования (теоретическая)**
 Определяется разрядностью АЦП:
+
 [stem]
 ++++
 \Delta_{теор} = \frac{V_{ref}}{2^{N}} = \frac{3,3}{4096} \approx 0,000805 \text{ В} = 0,8 \text{ мВ}
@@ -115,6 +117,7 @@ B = \frac{V_1 \cdot N_2 - V_2 \cdot N_1}{N_2 - N_1}
 
 **2. Реальная эффективная разрядность (ENOB)**
 С учетом шумов эффективная разрядность АЦП составляет примерно 10,5 бит. Реальная абсолютная погрешность, связанная с ENOB:
+
 [stem]
 ++++
 \Delta_{ENOB} = \frac{V_{ref}}{2^{ENOB}} = \frac{3,3}{2^{10,5}} \approx \frac{3,3}{1448} \approx 0,00228 \text{ В} = 2,3 \text{ мВ}
@@ -122,6 +125,7 @@ B = \frac{V_1 \cdot N_2 - V_2 \cdot N_1}{N_2 - N_1}
 
 **3. Температурная погрешность**
 Вызывается дрейфом смещения нуля и опорного напряжения. Температурный коэффициент для данного семейства МК составляет примерно ±20 ppm/°C. При изменении температуры на stem:[\Delta T = 30^\circ\text{C}] относительно точки калибровки (например, 25°С), абсолютная погрешность составит:
+
 [stem]
 ++++
 \Delta_{T} = 20 \cdot 10^{-6} \cdot V_{ref} \cdot \Delta T = 20 \cdot 10^{-6} \cdot 3,3 \cdot 30 \approx 1,98 \cdot 10^{-3} \text{ В} = 1,98 \text{ мВ}
@@ -137,6 +141,7 @@ B = \frac{V_1 \cdot N_2 - V_2 \cdot N_1}{N_2 - N_1}
 
 **Суммарная оценка погрешности (без учета фильтрации)**
 Суммарная некоррелированная погрешность вычисляется как корень из суммы квадратов:
+
 [stem]
 ++++
 \Delta_{\Sigma} = \sqrt{\Delta_{ENOB}^2 + \Delta_{T}^2 + \Delta_{Vref}^2} = \sqrt{2.3^2 + 1.98^2 + 10^2} \approx 10.4 \text{ мВ}
@@ -212,6 +217,7 @@ USARTDIV = \frac{f_{CK}}{8 \cdot (2 - OVER8) \cdot BaudRate}
 ++++
 
 где:
+
 * `f_{CK} = 16 000 000` Гц — частота тактирования USART2;
 * `OVER8` — коэффициент передискретизации (0 — 16-кратная, 1 — 8-кратная);
 * `BaudRate = 9600` — требуемая скорость.
@@ -237,13 +243,14 @@ USARTDIV_{reg} = USARTDIV - 1 = 104,1667 - 1 = 103,1667
 Регистр `BRR` имеет специальный формат: биты `15:4` содержат целую часть (Mantissa), а биты `3:0` — дробную часть (Fraction). Дробная часть хранит значение `DIV_Fraction = 16 × (USARTDIV - DIV_Mantissa)`.
 
 Для `USARTDIV_reg = 103,1667`:
+
 * `DIV_Mantissa = 103` (целая часть).
 * `USARTDIV_reg - DIV_Mantissa = 0,1667`.
 * `DIV_Fraction = 16 × 0,1667 = 2,667`.
 
-Округляем до ближайшего целого: `DIV_Fraction = 3`.
+Округляем до ближайшего целого `DIV_Fraction = 3`.
 
-Таким образом, в регистр `BRR` записывается значение: `BRR = (103 << 4) | 3 = 1651`.
+Таким образом, в регистр `BRR` записывается значение `BRR = (103 << 4) | 3 = 1651`.
 
 Использование дробной части позволяет более точно настроить скорость передачи, минимизируя ошибку тактирования. Без дробной части пришлось бы использовать `DIV_Mantissa = 103`, что дало бы реальную скорость:
 
@@ -387,6 +394,7 @@ M[k] = \text{"Voltage: "} + \text{Format}(V_{filt}[k \cdot 10], \text{"\%.3f"}) 
 где stem:[k = 0, 1, 2, \dots] — номер Bluetooth-сообщения (каждые 1000 мс = 10 шагов фильтрации).
 
 Маршрут передачи данных:
+
 . Строка формируется в задаче `BluetoothTask`
 . Передаётся посимвольно через интерфейс USART2 (вывод PA2 — TX)
 . Поступает на вход RX Bluetooth-модуля HC-06
@@ -444,6 +452,7 @@ M[k] = \text{"Voltage: "} + \text{Format}(V_{filt}[k \cdot 10], \text{"\%.3f"}) 
 Передача данных на смартфон или ПК осуществляется через Bluetooth-модуль *HC-06*, работающий как прозрачный мост UART–Bluetooth (SPP-профиль). Модуль HC-06 подключается к USART2 микроконтроллера (PA2 — TX, PA3 — RX). Он работает в режиме «прозрачного моста»: всё, что отправляется в USART2, передаётся по Bluetooth на подключённое устройство (смартфон, ПК).
 
 Настройки модуля по умолчанию:
+
 * Скорость: 9600 бод
 * 8 бит данных
 * 1 стоп-бит
@@ -581,7 +590,7 @@ image::FilteredVoltage.png[width=300px, align="center"]
 
 ---
 
-=== VoltageRange (enum)
+=== VoltageRange 
 
 **Назначение:** Перечисление уровней напряжения
 
@@ -727,41 +736,49 @@ image::BluetoothReporterTask.png[width=300px, align="center"]
 
 === LedMailBox (очередь)
 
-**Тип:** `QueueHandle_t` (статическая переменная в MeasurementTask)
+Тип: QueueHandle_t (статическая переменная в LedMailBox)
 
-**Назначение:** передача отфильтрованного напряжения из MeasurementTask в LEDIndicatorTask
+Назначение: передача отфильтрованного напряжения из MeasurementTask в LEDIndicatorTask
 
-**Параметры:**
-- Размер очереди: 10 элементов
-- Тип данных: `float`
+Параметры:
 
-**Операции:**
-- `xQueueCreate(10, sizeof(float))` - создание
-- `xQueueSend(s_ledMailBox, &value, 0)` - отправка
-- `xQueueReceive(s_ledMailBox, &value, portMAX_DELAY)` - получение
+Размер очереди: 10 элементов
+
+Тип данных: float
+
+Операции:
+
+LedMailBox::Create() - создание (xQueueCreate(10, sizeof(float)))
+
+LedMailBox::Send(value, 0) - отправка (xQueueSend(handle, &value, 0))
+
+LedMailBox::Receive(value, portMAX_DELAY) - получение (xQueueReceive(handle, &value, portMAX_DELAY))
 
 .LedMailBox
-image::LedMailBox.png[width=300px, align="center"]
+image::LedMailBox.png[width=400px, align="center"]
 
----
+=== UartMailBox (очередь)
 
-=== UARTMailBox (очередь)
+Тип: QueueHandle_t (статическая переменная в UartMailBox)
 
-**Тип:** `QueueHandle_t` (статическая переменная в MeasurementTask)
+Назначение: передача отфильтрованного напряжения из MeasurementTask в BluetoothReporterTask
 
-**Назначение:** передача отфильтрованного напряжения из MeasurementTask в BluetoothReporterTask
+Параметры:
 
-**Параметры:**
-- Размер очереди: 10 элементов
-- Тип данных: `float`
+Размер очереди: 10 элементов
 
-**Операции:**
-- `xQueueCreate(10, sizeof(float))` - создание
-- `xQueueSend(s_uartMailBox, &value, 0)` - отправка
-- `xQueueReceive(s_uartMailBox, &value, pdMS_TO_TICKS(100))` - получение
+Тип данных: float
 
-.UARTMailBox
-image::UARTMailBox.png[width=300px, align="center"]
+Операции:
+
+UartMailBox::Create() - создание (xQueueCreate(10, sizeof(float)))
+
+UartMailBox::Send(value, 0) - отправка (xQueueSend(handle, &value, 0))
+
+UartMailBox::Receive(value, pdMS_TO_TICKS(100)) - получение (xQueueReceive(handle, &value, pdMS_TO_TICKS(100)))
+
+.UartMailBox
+image::UartMailBox.png[width=400px, align="center"]
 
 == Настройка периферийных регистров
 
@@ -1047,602 +1064,4 @@ USART (Universal Synchronous Asynchronous Receiver Transmitter) — универ
 .Видео - Проверка работоспособности платы
 video::проверка.mp4[opts="muted"]
 
-ADCDriver.hpp
-[source,cpp]
-----
-#ifndef ADC_DRIVER_HPP
-#define ADC_DRIVER_HPP
-
-#include <cstdint>
-
-class ADCDriver {
-public:
-static void Init();
-static uint16_t GetValue();
-
-static volatile uint32_t s_adcValue;
-};
-#endif
-----
-ADCDriver.cpp
-[source,cpp]
-----
-#include "ADC_Driver.hpp"
-#include "adc1registers.hpp"
-#include "adccommonregisters.hpp"
-#include "dma2registers.hpp"
-#include "rccregisters.hpp"
-#include "gpioaregisters.hpp"
-
-volatile uint32_t ADCDriver::s_adcValue = 0;
-
-void ADCDriver::Init() {
-RCC::AHB1ENR::GPIOAEN::Enable::Set();
-RCC::APB2ENR::ADC1EN::Enable::Set();
-RCC::AHB1ENR::DMA2EN::Enable::Set();
-
-GPIOA::MODER::MODER0::Analog::Set();
-
-DMA2::S0CR::EN::Value0::Set();
-DMA2::S0CR::CHSEL::Value0::Set();
-DMA2::S0CR::CIRC::Value1::Set();
-DMA2::S0CR::MSIZE::Value2::Set();
-DMA2::S0CR::PSIZE::Value2::Set();
-DMA2::S0CR::DIR::Value0::Set();
-DMA2::S0PAR::Write(ADC1::DR::Address);
-DMA2::S0M0AR::Write(reinterpret_cast<uint32_t>(&s_adcValue));
-DMA2::S0NDTR::Write(1);
-DMA2::S0CR::EN::Value1::Set();
-
-ADC1::CR1::RES::Bits12::Set();
-ADC1::CR1::SCAN::Enable::Set();
-ADC1::CR2::CONT::ContinuousConversion::Set();
-ADC1::CR2::DMA::Enable::Set();
-ADC1::CR2::DDS::DMARequest::Set();
-ADC1::SQR1::L::Conversions1::Set();
-ADC1::SQR3::SQ1::Channel0::Set();
-ADC1::SMPR2::SMP0::Cycles84::Set();
-
-ADC1::CR2::ADON::Enable::Set();
-for (int i = 0; i < 1000; i++);
-ADC1::CR2::SWSTART::On::Set();
-}
-
-uint16_t ADCDriver::GetValue() {
-return static_cast<uint16_t>(s_adcValue & 0x0FFF);
-}
-----
-VoltagePerevod.hpp
-[source,cpp]
-----
-#ifndef VOLTAGE_PEREVOD_HPP
-#define VOLTAGE_PEREVOD_HPP
-
-#include <cstdint>
-
-class VoltagePerevod {
-public:
-static float Convert(uint16_t adcCode) {
-const uint32_t ADC_RESOLUTION = 4095;
-const float ADC_REF_VOLTAGE = 3.3f;
-return (float)adcCode * ADC_REF_VOLTAGE / ADC_RESOLUTION;
-}
-};
-
-#endif
-
-FilteredVoltage.hpp
-[source,cpp]
-
-#ifndef FILTERED_VOLTAGE_HPP
-#define FILTERED_VOLTAGE_HPP
-
-class FilteredVoltage {
-public:
-FilteredVoltage(float tau);
-void Update(float rawVoltage);
-float GetValue() const;
-void Reset();
-
-private:
-float m_tau;
-float m_filteredValue;
-bool m_firstSample;
-};
-
-#endif
-----
-FilteredVoltage.cpp
-[source,cpp]
-----
-#include "FilteredVoltage.hpp"
-
-FilteredVoltage::FilteredVoltage(float tau)
-: m_tau(tau), m_filteredValue(0.0f), m_firstSample(true) {}
-
-void FilteredVoltage::Update(float rawVoltage) {
-if (m_firstSample) {
-m_filteredValue = rawVoltage;
-m_firstSample = false;
-} else {
-m_filteredValue = m_filteredValue + (rawVoltage - m_filteredValue) * m_tau;
-}
-}
-
-float FilteredVoltage::GetValue() const {
-return m_filteredValue;
-}
-
-void FilteredVoltage::Reset() {
-m_firstSample = true;
-m_filteredValue = 0.0f;
-}
-----
-VoltageRange.hpp
-[source,cpp]
-----
-#ifndef VOLTAGE_RANGE_HPP
-#define VOLTAGE_RANGE_HPP
-
-#include <cstdint>
-
-enum class VoltageRange : uint8_t {
-LEVEL_0 = 0,
-LEVEL_1 = 1,
-LEVEL_2 = 2,
-LEVEL_3 = 3
-};
-
-class VoltageRangeCalculator {
-public:
-static VoltageRange Calculate(float voltage, float maxVoltage);
-static uint8_t GetLedCount(VoltageRange range);
-};
-
-#endif
-----
-VoltageRange.cpp
-[source,cpp]
-----
-#include "VoltageRange.hpp"
-
-static const float LED_LEVEL_1 = 0.25f;
-static const float LED_LEVEL_2 = 0.50f;
-static const float LED_LEVEL_3 = 0.75f;
-
-VoltageRange VoltageRangeCalculator::Calculate(float voltage, float maxVoltage) {
-float percentage = voltage / maxVoltage;
-
-if (percentage >= LED_LEVEL_3) {
-return VoltageRange::LEVEL_3;
-} else if (percentage >= LED_LEVEL_2) {
-return VoltageRange::LEVEL_2;
-} else if (percentage >= LED_LEVEL_1) {
-return VoltageRange::LEVEL_1;
-} else {
-return VoltageRange::LEVEL_0;
-}
-}
-
-uint8_t VoltageRangeCalculator::GetLedCount(VoltageRange range) {
-switch (range) {
-case VoltageRange::LEVEL_3: return 4;
-case VoltageRange::LEVEL_2: return 3;
-case VoltageRange::LEVEL_1: return 2;
-default: return 1;
-}
-}
-----
-LEDDriver.hpp
-[source,cpp]
-----
-#ifndef LED_DRIVER_HPP
-#define LED_DRIVER_HPP
-
-#include <cstdint>
-
-class LEDDriver {
-public:
-static void Init();
-static void SetLED(uint8_t index, bool state);
-static void SetAll(bool state);
-static void SetCount(uint8_t count);
-static constexpr uint8_t LED_COUNT = 4;
-};
-
-#endif
-----
-LEDDriver.cpp
-[source,cpp]
-----
-#include "LED_Driver.hpp"
-#include "rccregisters.hpp"
-#include "gpioaregisters.hpp"
-#include "gpiocregisters.hpp"
-
-void LEDDriver::Init() {
-RCC::AHB1ENR::GPIOAEN::Enable::Set();
-RCC::AHB1ENR::GPIOCEN::Enable::Set();
-
-GPIOA::MODER::MODER5::Output::Set();
-GPIOC::MODER::MODER5::Output::Set();
-GPIOC::MODER::MODER8::Output::Set();
-GPIOC::MODER::MODER9::Output::Set();
-
-SetAll(false);
-}
-
-void LEDDriver::SetLED(uint8_t index, bool state) {
-switch (index) {
-case 0:
-if (state) GPIOA::ODR::ODR5::High::Set();
-else GPIOA::ODR::ODR5::Low::Set();
-break;
-case 1:
-if (state) GPIOC::ODR::ODR9::High::Set();
-else GPIOC::ODR::ODR9::Low::Set();
-break;
-case 2:
-if (state) GPIOC::ODR::ODR8::High::Set();
-else GPIOC::ODR::ODR8::Low::Set();
-break;
-case 3:
-if (state) GPIOC::ODR::ODR5::High::Set();
-else GPIOC::ODR::ODR5::Low::Set();
-break;
-}
-}
-
-void LEDDriver::SetAll(bool state) {
-for (uint8_t i = 0; i < LED_COUNT; i++) {
-SetLED(i, state);
-}
-}
-
-void LEDDriver::SetCount(uint8_t count) {
-for (uint8_t i = 0; i < LED_COUNT; i++) {
-SetLED(i, i < count);
-}
-}
-----
-USART2Driver.hpp
-[source,cpp]
-----
-#ifndef USART_DRIVER_HPP
-#define USART_DRIVER_HPP
-
-#include <cstdint>
-#include <cstdarg>
-#include <cstdio>
-
-class USART2Driver {
-public:
-static void Init(uint32_t baudrate);
-static void SendChar(char c);
-static void SendString(const char* str);
-};
-
-#endif
-----
-USART2Driver.cpp
-[source,cpp]
-----
-#include "USART_Driver.hpp"
-#include "rccregisters.hpp"
-#include "gpioaregisters.hpp"
-#include "usart2registers.hpp"
-
-void USART2Driver::Init(uint32_t baudrate) {
-RCC::APB1ENR::USART2EN::Enable::Set();
-RCC::AHB1ENR::GPIOAEN::Enable::Set();
-
-GPIOA::MODER::MODER2::Alternate::Set();
-GPIOA::MODER::MODER3::Alternate::Set();
-
-GPIOA::AFRL::AFRL2::Af7::Set();
-GPIOA::AFRL::AFRL3::Af7::Set();
-
-uint32_t uartdiv = 16000000 / baudrate;
-USART2::BRR::DIV_Mantissa::Set(uartdiv >> 4);
-USART2::BRR::DIV_Fraction::Set(uartdiv & 0x0F);
-
-USART2::CR1::TE::Enable::Set();
-USART2::CR1::RE::Enable::Set();
-USART2::CR1::UE::Enable::Set();
-}
-
-void USART2Driver::SendChar(char c) {
-while (USART2::SR::TXE::Get() == 0);
-USART2::DR::DRField::Set(static_cast<uint8_t>(c));
-}
-
-void USART2Driver::SendString(const char* str) {
-while (str) {
-SendChar(str++);
-}
-}
-----
-Formatter.hpp
-[source,cpp]
-----
-#ifndef FORMATTER_HPP
-#define FORMATTER_HPP
-
-#include <cstdio>
-
-class Formatter {
-public:
-static void Format(float voltage, char* buffer, size_t bufferSize) {
-const char* OUTPUT_FORMAT = "Voltage: %.3f V\r\n";
-snprintf(buffer, bufferSize, OUTPUT_FORMAT, (double)voltage);
-}
-};
-
-#endif
-----
-MeasurementTask.hpp
-[source,cpp]
-----
-#ifndef MEASUREMENT_TASK_HPP
-#define MEASUREMENT_TASK_HPP
-
-#include "FilteredVoltage.hpp"
-#include "FreeRTOS.h"
-#include "queue.h"
-
-class MeasurementTask {
-public:
-MeasurementTask();
-void Execute();
-
-static QueueHandle_t s_ledMailBox;
-static QueueHandle_t s_uartMailBox;
-
-private:
-FilteredVoltage m_filter;
-float m_lastRawVoltage;
-float m_lastFilteredVoltage;
-
-void ProcessVoltage(float rawVoltage);
-void InitTimer();
-
-static uint8_t s_measurementCounter;
-};
-
-#endif
-----
-MeasurementTask.cpp
-[source,cpp]
-----
-#include "MeasurementTask.hpp"
-#include "ADC_Driver.hpp"
-#include "VoltagePerevod.hpp"
-#include "USART_Driver.hpp"
-#include "FreeRTOS.h"
-#include "task.h"
-#include "tim2registers.hpp"
-#include "rccregisters.hpp"
-
-QueueHandle_t MeasurementTask::s_ledMailBox = nullptr;
-QueueHandle_t MeasurementTask::s_uartMailBox = nullptr;
-
-static volatile bool measurementReady = false;
-uint8_t MeasurementTask::s_measurementCounter = 0;
-
-extern "C" void TIM2_IRQHandler(void) {
-if (TIM2::SR::UIF::InterruptPending::IsSet()) {
-TIM2::SR::UIF::Set(0);
-measurementReady = true;
-}
-}
-
-void MeasurementTask::InitTimer() {
-RCC::APB1ENR::TIM2EN::Enable::Set();
-TIM2::PSC::Set(16000 - 1);
-TIM2::ARR::Write(50 - 1);
-TIM2::SR::UIF::Set(0);
-TIM2::CNT::Set(0);
-TIM2::DIER::UIE::Enable::Set();
-
-#define NVIC_ISER0 ((volatile uint32_t)0xE000E100U)
-NVIC_ISER0 |= (1 << 28);
-
-TIM2::CR1::CEN::Enable::Set();
-}
-
-MeasurementTask::MeasurementTask()
-: m_filter(0.095f),
-m_lastRawVoltage(0.0f),
-m_lastFilteredVoltage(0.0f) {}
-
-void MeasurementTask::Execute() {
-s_ledMailBox = xQueueCreate(10, sizeof(float));
-s_uartMailBox = xQueueCreate(10, sizeof(float));
-
-ADCDriver::Init();
-InitTimer();
-
-for (;;) {
-if (measurementReady) {
-measurementReady = false;
-
-s_measurementCounter++;
-
-if (s_measurementCounter >= 2) {
-s_measurementCounter = 0;
-
-uint16_t adcCode = ADCDriver::GetValue();
-float rawVoltage = VoltagePerevod::Convert(adcCode);
-ProcessVoltage(rawVoltage);
-
-xQueueSend(s_ledMailBox, &m_lastFilteredVoltage, 0);
-xQueueSend(s_uartMailBox, &m_lastFilteredVoltage, 0);
-}
-}
-
-vTaskDelay(pdMS_TO_TICKS(10));
-}
-}
-
-void MeasurementTask::ProcessVoltage(float rawVoltage) {
-m_filter.Update(rawVoltage);
-m_lastFilteredVoltage = m_filter.GetValue();
-}
-----
-LEDIndicatorTask.hpp
-[source,cpp]
-----
-#ifndef LED_INDICATOR_TASK_HPP
-#define LED_INDICATOR_TASK_HPP
-
-#include "MeasurementTask.hpp"
-#include "VoltageRange.hpp"
-#include "LED_Driver.hpp"
-
-class LEDIndicatorTask {
-public:
-void Execute();
-
-private:
-void UpdateLEDs(float voltage);
-};
-
-#endif
-----
-LEDIndicatorTask.cpp
-[source,cpp]
-----
-#include "LEDIndicatorTask.hpp"
-#include "USART_Driver.hpp"
-#include "FreeRTOS.h"
-#include "task.h"
-
-void LEDIndicatorTask::Execute() {
-LEDDriver::Init();
-float voltage = 0.0f;
-
-for (;;) {
-if (MeasurementTask::s_ledMailBox != nullptr) {
-if (xQueueReceive(MeasurementTask::s_ledMailBox, &voltage, portMAX_DELAY)) {
-UpdateLEDs(voltage);
-}
-}
-vTaskDelay(pdMS_TO_TICKS(10));
-}
-}
-
-void LEDIndicatorTask::UpdateLEDs(float voltage) {
-const float VOLTAGE_MAX = 3.3f;
-VoltageRange range = VoltageRangeCalculator::Calculate(voltage, VOLTAGE_MAX);
-uint8_t ledCount = VoltageRangeCalculator::GetLedCount(range);
-LEDDriver::SetCount(ledCount);
-}
-----
-BluetoothReporterTask.hpp
-[source,cpp]
-----
-#ifndef BLUETOOTH_REPORTER_TASK_HPP
-#define BLUETOOTH_REPORTER_TASK_HPP
-
-#include "MeasurementTask.hpp"
-#include "USART_Driver.hpp"
-#include "Formatter.hpp"
-
-class BluetoothReporterTask {
-public:
-void Execute();
-
-private:
-void ReportVoltage(float voltage);
-};
-
-#endif
-----
-BluetoothReporterTask.cpp
-[source,cpp]
-----
-#include "BluetoothReporterTask.hpp"
-#include "Formatter.hpp"
-#include "FreeRTOS.h"
-#include "task.h"
-
-void BluetoothReporterTask::Execute() {
-float voltage = 0.0f;
-
-for (;;) {
-if (MeasurementTask::s_uartMailBox != nullptr) {
-if (xQueueReceive(MeasurementTask::s_uartMailBox, &voltage, pdMS_TO_TICKS(100))) {
-ReportVoltage(voltage);
-}
-}
-vTaskDelay(pdMS_TO_TICKS(100));
-}
-}
-
-void BluetoothReporterTask::ReportVoltage(float voltage) {
-char buffer[128];
-Formatter::Format(voltage, buffer, sizeof(buffer));
-USART2Driver::SendString(buffer);
-}
-----
-main.cpp
-[source,cpp]
-----
-#include "FreeRTOS.h"
-#include "task.h"
-#include "MeasurementTask.hpp"
-#include "LEDIndicatorTask.hpp"
-#include "BluetoothReporterTask.hpp"
-#include "USART_Driver.hpp"
-
-extern "C" void SVC_Handler(void) attribute((weak));
-extern "C" void PendSV_Handler(void) attribute((weak));
-extern "C" void SysTick_Handler(void) attribute((weak));
-
-uint32_t SystemCoreClock = 16000000;
-
-const size_t STACK_SIZE_VOLTAGE_READER = 512;
-const size_t STACK_SIZE_LED_INDICATOR = 256;
-const size_t STACK_SIZE_BLUETOOTH = 512;
-
-const int PRIORITY_VOLTAGE_READER = 2;
-const int PRIORITY_LED_INDICATOR = 1;
-const int PRIORITY_BLUETOOTH = 0;
-
-MeasurementTask measurementTask;
-LEDIndicatorTask ledIndicatorTask;
-BluetoothReporterTask bluetoothReporterTask;
-
-extern "C" void MeasurementTaskWrapper(void *pvParameters) {
-measurementTask.Execute();
-}
-
-extern "C" void LEDIndicatorTaskWrapper(void *pvParameters) {
-ledIndicatorTask.Execute();
-}
-
-extern "C" void BluetoothReporterTaskWrapper(void *pvParameters) {
-bluetoothReporterTask.Execute();
-}
-
-extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
-while(1);
-}
-
-extern "C" void vApplicationIdleHook(void) {}
-
-int main() {
-USART2Driver::Init(9600);
-USART2Driver::SendString("System starting...\r\n");
-
-xTaskCreate(MeasurementTaskWrapper, "Measurement", STACK_SIZE_VOLTAGE_READER, NULL, PRIORITY_VOLTAGE_READER, NULL);
-xTaskCreate(LEDIndicatorTaskWrapper, "LEDIndicator", STACK_SIZE_LED_INDICATOR, NULL, PRIORITY_LED_INDICATOR, NULL);
-xTaskCreate(BluetoothReporterTaskWrapper, "Bluetooth", STACK_SIZE_BLUETOOTH, NULL, PRIORITY_BLUETOOTH, NULL);
-
-USART2Driver::SendString("Tasks created, starting scheduler...\r\n");
-
-vTaskStartScheduler();
-
-while(1);
-}
-----
+include::Код работы.adoc[]

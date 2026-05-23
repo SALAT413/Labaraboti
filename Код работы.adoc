@@ -1,0 +1,684 @@
+main.cpp
+[source,cpp]
+----
+#include "FreeRTOS.h"
+#include "task.h"
+#include "MeasurementTask.hpp"
+#include "LEDIndicatorTask.hpp"
+#include "BluetoothReporterTask.hpp"
+#include "USART_Driver.hpp"
+#include "LedMailBox.hpp"
+#include "UartMailBox.hpp"
+
+extern "C" void SVC_Handler(void) attribute((weak));
+extern "C" void PendSV_Handler(void) attribute((weak));
+extern "C" void SysTick_Handler(void) attribute((weak));
+
+uint32_t SystemCoreClock = 16000000;
+
+const size_t STACK_SIZE_VOLTAGE_READER = 512;
+const size_t STACK_SIZE_LED_INDICATOR = 256;
+const size_t STACK_SIZE_BLUETOOTH = 512;
+
+const int PRIORITY_VOLTAGE_READER = 3;
+const int PRIORITY_LED_INDICATOR = 2;
+const int PRIORITY_BLUETOOTH = 1;
+
+MeasurementTask measurementTask;
+LEDIndicatorTask ledIndicatorTask;
+BluetoothReporterTask bluetoothReporterTask;
+
+extern "C" void MeasurementTaskWrapper(void *pvParameters) {
+measurementTask.Execute();
+}
+
+extern "C" void LEDIndicatorTaskWrapper(void *pvParameters) {
+ledIndicatorTask.Execute();
+}
+
+extern "C" void BluetoothReporterTaskWrapper(void *pvParameters) {
+bluetoothReporterTask.Execute();
+}
+
+extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+while(1);
+}
+
+extern "C" void vApplicationIdleHook(void) {}
+
+int main() {
+USART2Driver::Init(9600);
+USART2Driver::SendString("System starting...\r\n");
+
+xTaskCreate(MeasurementTaskWrapper, "Measurement", STACK_SIZE_VOLTAGE_READER, NULL, PRIORITY_VOLTAGE_READER, NULL);
+xTaskCreate(LEDIndicatorTaskWrapper, "LEDIndicator", STACK_SIZE_LED_INDICATOR, NULL, PRIORITY_LED_INDICATOR, NULL);
+xTaskCreate(BluetoothReporterTaskWrapper, "Bluetooth", STACK_SIZE_BLUETOOTH, NULL, PRIORITY_BLUETOOTH, NULL);
+
+USART2Driver::SendString("Tasks created, starting scheduler...\r\n");
+
+vTaskStartScheduler();
+
+while(1);
+}
+----
+ADC_Driver.hpp
+[source,cpp]
+----
+#ifndef ADC_DRIVER_HPP
+#define ADC_DRIVER_HPP
+
+#include <cstdint>
+
+class ADCDriver {
+public:
+static void Init();
+static uint16_t GetValue();
+
+static volatile uint32_t s_adcValue;
+};
+
+#endif
+----
+ADC_Driver.cpp
+[source,cpp]
+----
+#include "ADC_Driver.hpp"
+#include "adc1registers.hpp"
+#include "adccommonregisters.hpp"
+#include "dma2registers.hpp"
+#include "rccregisters.hpp"
+#include "gpioaregisters.hpp"
+
+volatile uint32_t ADCDriver::s_adcValue = 0;
+
+void ADCDriver::Init() {
+RCC::AHB1ENR::GPIOAEN::Enable::Set();
+RCC::APB2ENR::ADC1EN::Enable::Set();
+RCC::AHB1ENR::DMA2EN::Enable::Set();
+
+GPIOA::MODER::MODER0::Analog::Set();
+
+DMA2::S0CR::EN::Value0::Set();
+DMA2::S0CR::CHSEL::Value0::Set();
+DMA2::S0CR::CIRC::Value1::Set();
+DMA2::S0CR::MSIZE::Value2::Set();
+DMA2::S0CR::PSIZE::Value2::Set();
+DMA2::S0CR::DIR::Value0::Set();
+DMA2::S0PAR::Write(ADC1::DR::Address);
+DMA2::S0M0AR::Write(reinterpret_cast<uint32_t>(&s_adcValue));
+DMA2::S0NDTR::Write(1);
+DMA2::S0CR::EN::Value1::Set();
+
+ADC1::CR1::RES::Bits12::Set();
+ADC1::CR1::SCAN::Enable::Set();
+ADC1::CR2::CONT::ContinuousConversion::Set();
+ADC1::CR2::DMA::Enable::Set();
+ADC1::CR2::DDS::DMARequest::Set();
+ADC1::SQR1::L::Conversions1::Set();
+ADC1::SQR3::SQ1::Channel0::Set();
+ADC1::SMPR2::SMP0::Cycles84::Set();
+
+ADC1::CR2::ADON::Enable::Set();
+for (int i = 0; i < 1000; i++);
+ADC1::CR2::SWSTART::On::Set();
+}
+
+uint16_t ADCDriver::GetValue() {
+return static_cast<uint16_t>(s_adcValue & 0x0FFF);
+}
+----
+VoltagePerevod.hpp
+[source,cpp]
+----
+#ifndef VOLTAGE_PEREVOD_HPP
+#define VOLTAGE_PEREVOD_HPP
+
+#include <cstdint>
+
+class VoltagePerevod {
+public:
+static float Convert(uint16_t adcCode) {
+const uint32_t ADC_RESOLUTION = 4095;
+const float ADC_REF_VOLTAGE = 3.3f;
+return (float)adcCode * ADC_REF_VOLTAGE / ADC_RESOLUTION;
+}
+};
+
+#endif
+----
+FilteredVoltage.hpp
+[source,cpp]
+----
+#ifndef FILTERED_VOLTAGE_HPP
+#define FILTERED_VOLTAGE_HPP
+
+class FilteredVoltage {
+public:
+FilteredVoltage(float tau);
+void Update(float rawVoltage);
+float GetValue() const;
+void Reset();
+
+private:
+float m_tau;
+float m_filteredValue;
+bool m_firstSample;
+};
+
+#endif
+----
+FilteredVoltage.cpp
+[source,cpp]
+----
+#include "FilteredVoltage.hpp"
+
+FilteredVoltage::FilteredVoltage(float tau)
+: m_tau(tau), m_filteredValue(0.0f), m_firstSample(true) {}
+
+void FilteredVoltage::Update(float rawVoltage) {
+if (m_firstSample) {
+m_filteredValue = rawVoltage;
+m_firstSample = false;
+} else {
+m_filteredValue = m_filteredValue + (rawVoltage - m_filteredValue) * m_tau;
+}
+}
+
+float FilteredVoltage::GetValue() const {
+return m_filteredValue;
+}
+
+void FilteredVoltage::Reset() {
+m_firstSample = true;
+m_filteredValue = 0.0f;
+}
+----
+VoltageRange.hpp
+[source,cpp]
+----
+#ifndef VOLTAGE_RANGE_HPP
+#define VOLTAGE_RANGE_HPP
+
+#include <cstdint>
+
+enum class VoltageRange : uint8_t {
+LEVEL_0 = 0,
+LEVEL_1 = 1,
+LEVEL_2 = 2,
+LEVEL_3 = 3
+};
+
+class VoltageRangeCalculator {
+public:
+static VoltageRange Calculate(float voltage, float maxVoltage);
+static uint8_t GetLedCount(VoltageRange range);
+};
+
+#endif
+----
+VoltageRange.cpp
+[source,cpp]
+----
+#include "VoltageRange.hpp"
+
+static const float LED_LEVEL_1 = 0.25f;
+static const float LED_LEVEL_2 = 0.50f;
+static const float LED_LEVEL_3 = 0.75f;
+VoltageRange VoltageRangeCalculator::Calculate(float voltage, float maxVoltage) {
+float percentage = voltage / maxVoltage;
+if (percentage >= LED_LEVEL_3) {
+return VoltageRange::LEVEL_3;
+} else if (percentage >= LED_LEVEL_2) {
+return VoltageRange::LEVEL_2;
+} else if (percentage >= LED_LEVEL_1) {
+return VoltageRange::LEVEL_1;
+} else {
+return VoltageRange::LEVEL_0;
+}
+}
+
+uint8_t VoltageRangeCalculator::GetLedCount(VoltageRange range) {
+switch (range) {
+case VoltageRange::LEVEL_3: return 4;
+case VoltageRange::LEVEL_2: return 3;
+case VoltageRange::LEVEL_1: return 2;
+default: return 1;
+}
+}
+----
+LED_Driver.hpp
+[source,cpp]
+----
+#ifndef LED_DRIVER_HPP
+#define LED_DRIVER_HPP
+
+#include <cstdint>
+
+class LEDDriver {
+public:
+static void Init();
+static void SetLED(uint8_t index, bool state);
+static void SetAll(bool state);
+static void SetCount(uint8_t count);
+static constexpr uint8_t LED_COUNT = 4;
+};
+
+#endif
+----
+LED_Driver.cpp
+[source,cpp]
+----
+#include "LED_Driver.hpp"
+#include "rccregisters.hpp"
+#include "gpioaregisters.hpp"
+#include "gpiocregisters.hpp"
+
+void LEDDriver::Init() {
+RCC::AHB1ENR::GPIOAEN::Enable::Set();
+RCC::AHB1ENR::GPIOCEN::Enable::Set();
+
+GPIOA::MODER::MODER5::Output::Set();
+GPIOC::MODER::MODER5::Output::Set();
+GPIOC::MODER::MODER8::Output::Set();
+GPIOC::MODER::MODER9::Output::Set();
+
+SetAll(false);
+}
+
+void LEDDriver::SetLED(uint8_t index, bool state) {
+switch (index) {
+case 0:
+if (state) GPIOA::ODR::ODR5::High::Set();
+else GPIOA::ODR::ODR5::Low::Set();
+break;
+case 1:
+if (state) GPIOC::ODR::ODR9::High::Set();
+else GPIOC::ODR::ODR9::Low::Set();
+break;
+case 2:
+if (state) GPIOC::ODR::ODR8::High::Set();
+else GPIOC::ODR::ODR8::Low::Set();
+break;
+case 3:
+if (state) GPIOC::ODR::ODR5::High::Set();
+else GPIOC::ODR::ODR5::Low::Set();
+break;
+}
+}
+
+void LEDDriver::SetAll(bool state) {
+for (uint8_t i = 0; i < LED_COUNT; i++) {
+SetLED(i, state);
+}
+}
+
+void LEDDriver::SetCount(uint8_t count) {
+for (uint8_t i = 0; i < LED_COUNT; i++) {
+SetLED(i, i < count);
+}
+}
+----
+USART_Driver.hpp
+[source,cpp]
+----
+#ifndef USART_DRIVER_HPP
+#define USART_DRIVER_HPP
+
+#include <cstdint>
+#include <cstdarg>
+#include <cstdio>
+
+class USART2Driver {
+public:
+static void Init(uint32_t baudrate);
+static void SendChar(char c);
+static void SendString(const char* str);
+};
+
+#endif
+----
+USART_Driver.cpp
+[source,cpp]
+----
+#include "USART_Driver.hpp"
+#include "rccregisters.hpp"
+#include "gpioaregisters.hpp"
+#include "usart2registers.hpp"
+
+void USART2Driver::Init(uint32_t baudrate) {
+RCC::APB1ENR::USART2EN::Enable::Set();
+RCC::AHB1ENR::GPIOAEN::Enable::Set();
+
+GPIOA::MODER::MODER2::Alternate::Set();
+GPIOA::MODER::MODER3::Alternate::Set();
+
+GPIOA::AFRL::AFRL2::Af7::Set();
+GPIOA::AFRL::AFRL3::Af7::Set();
+
+uint32_t uartdiv = 16000000 / baudrate;
+USART2::BRR::DIV_Mantissa::Set(uartdiv >> 4);
+USART2::BRR::DIV_Fraction::Set(uartdiv & 0x0F);
+
+USART2::CR1::TE::Enable::Set();
+USART2::CR1::RE::Enable::Set();
+USART2::CR1::UE::Enable::Set();
+}
+
+void USART2Driver::SendChar(char c) {
+while (USART2::SR::TXE::Get() == 0);
+USART2::DR::DRField::Set(static_cast<uint8_t>(c));
+}
+
+void USART2Driver::SendString(const char* str) {
+while (str) {
+SendChar(str++);
+}
+}
+----
+Formatter.hpp
+[source,cpp]
+----
+#ifndef FORMATTER_HPP
+#define FORMATTER_HPP
+
+#include <cstdio>
+
+class Formatter {
+public:
+static void Format(float voltage, char* buffer, size_t bufferSize) {
+const char* OUTPUT_FORMAT = "Voltage: %.3f V\r\n";
+snprintf(buffer, bufferSize, OUTPUT_FORMAT, (double)voltage);
+}
+};
+
+#endif
+----
+LedMailBox.hpp
+[source,cpp]
+----
+#ifndef LED_MAIL_BOX_HPP
+#define LED_MAIL_BOX_HPP
+
+#include "FreeRTOS.h"
+#include "queue.h"
+
+#define LED_MAILBOX_SIZE 10
+
+typedef float LedMailBoxDataType;
+
+class LedMailBox {
+public:
+static void Create() {
+if (s_handle == nullptr) {
+s_handle = xQueueCreate(LED_MAILBOX_SIZE, sizeof(LedMailBoxDataType));
+}
+}
+
+static bool Send(const LedMailBoxDataType& value, TickType_t timeout = 0) {
+if (s_handle == nullptr) return false;
+return xQueueSend(s_handle, &value, timeout) == pdPASS;
+}
+
+static bool Receive(LedMailBoxDataType& value, TickType_t timeout = portMAX_DELAY) {
+if (s_handle == nullptr) return false;
+return xQueueReceive(s_handle, &value, timeout) == pdPASS;
+}
+
+static bool IsCreated() {
+return s_handle != nullptr;
+}
+
+private:
+static QueueHandle_t s_handle;
+};
+
+#endif
+----
+LedMailBox.cpp
+[source,cpp]
+----
+#include "LedMailBox.hpp"
+
+QueueHandle_t LedMailBox::s_handle = nullptr;
+----
+UartMailBox.hpp
+[source,cpp]
+----
+#ifndef UART_MAIL_BOX_HPP
+#define UART_MAIL_BOX_HPP
+
+#include "FreeRTOS.h"
+#include "queue.h"
+
+#define UART_MAILBOX_SIZE 10
+
+typedef float UartMailBoxDataType;
+
+class UartMailBox {
+public:
+static void Create() {
+if (s_handle == nullptr) {
+s_handle = xQueueCreate(UART_MAILBOX_SIZE, sizeof(UartMailBoxDataType));
+}
+}
+
+static bool Send(const UartMailBoxDataType& value, TickType_t timeout = 0) {
+if (s_handle == nullptr) return false;
+return xQueueSend(s_handle, &value, timeout) == pdPASS;
+}
+
+static bool Receive(UartMailBoxDataType& value, TickType_t timeout = pdMS_TO_TICKS(100)) {
+if (s_handle == nullptr) return false;
+return xQueueReceive(s_handle, &value, timeout) == pdPASS;
+}
+
+static bool IsCreated() {
+return s_handle != nullptr;
+}
+
+private:
+static QueueHandle_t s_handle;
+};
+
+#endif
+----
+UartMailBox.cpp
+[source,cpp]
+----
+#include "UartMailBox.hpp"
+
+QueueHandle_t UartMailBox::s_handle = nullptr;
+----
+MeasurementTask.hpp
+[source,cpp]
+----
+#ifndef MEASUREMENT_TASK_HPP
+#define MEASUREMENT_TASK_HPP
+
+#include "FilteredVoltage.hpp"
+#include "LedMailBox.hpp"
+#include "UartMailBox.hpp"
+
+class MeasurementTask {
+public:
+MeasurementTask();
+void Execute();
+
+private:
+FilteredVoltage m_filter;
+float m_lastRawVoltage;
+float m_lastFilteredVoltage;
+
+void ProcessVoltage(float rawVoltage);
+void InitTimer();
+};
+
+#endif
+----
+MeasurementTask.cpp
+[source,cpp]
+----
+#include "MeasurementTask.hpp"
+#include "ADC_Driver.hpp"
+#include "VoltagePerevod.hpp"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "tim2registers.hpp"
+#include "rccregisters.hpp"
+
+static volatile bool measurementReady = false;
+uint8_t measurementCounter = 0;
+
+extern "C" void TIM2_IRQHandler(void) {
+if (TIM2::SR::UIF::InterruptPending::IsSet()) {
+TIM2::SR::UIF::Set(0);
+measurementReady = true;
+}
+}
+
+void MeasurementTask::InitTimer() {
+RCC::APB1ENR::TIM2EN::Enable::Set();
+TIM2::PSC::Set(16000 - 1);
+TIM2::ARR::Write(50 - 1);
+TIM2::SR::UIF::Set(0);
+TIM2::CNT::Set(0);
+TIM2::DIER::UIE::Enable::Set();
+
+#define NVIC_ISER0 ((volatile uint32_t)0xE000E100U)
+NVIC_ISER0 |= (1 << 28);
+
+TIM2::CR1::CEN::Enable::Set();
+}
+
+MeasurementTask::MeasurementTask()
+: m_filter(0.095f),
+m_lastRawVoltage(0.0f),
+m_lastFilteredVoltage(0.0f) {}
+
+void MeasurementTask::Execute() {
+LedMailBox::Create();
+UartMailBox::Create();
+
+ADCDriver::Init();
+InitTimer();
+
+for (;;) {
+if (measurementReady) {
+measurementReady = false;
+measurementCounter++;
+
+if (measurementCounter >= 2) {
+measurementCounter = 0;
+
+uint16_t adcCode = ADCDriver::GetValue();
+float rawVoltage = VoltagePerevod::Convert(adcCode);
+ProcessVoltage(rawVoltage);
+
+LedMailBox::Send(m_lastFilteredVoltage);
+UartMailBox::Send(m_lastFilteredVoltage);
+}
+}
+
+vTaskDelay(pdMS_TO_TICKS(10));
+}
+}
+
+void MeasurementTask::ProcessVoltage(float rawVoltage) {
+m_filter.Update(rawVoltage);
+m_lastFilteredVoltage = m_filter.GetValue();
+}
+----
+LEDIndicatorTask.hpp
+[source,cpp]
+----
+#ifndef LED_INDICATOR_TASK_HPP
+#define LED_INDICATOR_TASK_HPP
+
+#include "MeasurementTask.hpp"
+#include "VoltageRange.hpp"
+#include "LED_Driver.hpp"
+
+class LEDIndicatorTask {
+public:
+void Execute();
+
+private:
+void UpdateLEDs(float voltage);
+};
+
+#endif
+----
+LEDIndicatorTask.cpp
+[source,cpp]
+----
+#include "LEDIndicatorTask.hpp"
+#include "LedMailBox.hpp"
+#include "VoltageRange.hpp"
+#include "LED_Driver.hpp"
+#include "FreeRTOS.h"
+#include "task.h"
+
+void LEDIndicatorTask::Execute() {
+LEDDriver::Init();
+float voltage = 0.0f;
+
+for (;;) {
+if (LedMailBox::Receive(voltage, portMAX_DELAY)) {
+UpdateLEDs(voltage);
+}
+vTaskDelay(pdMS_TO_TICKS(10));
+}
+}
+
+void LEDIndicatorTask::UpdateLEDs(float voltage) {
+const float VOLTAGE_MAX = 3.3f;
+VoltageRange range = VoltageRangeCalculator::Calculate(voltage, VOLTAGE_MAX);
+uint8_t ledCount = VoltageRangeCalculator::GetLedCount(range);
+LEDDriver::SetCount(ledCount);
+}
+----
+BluetoothReporterTask.hpp
+[source,cpp]
+----
+#ifndef BLUETOOTH_REPORTER_TASK_HPP
+#define BLUETOOTH_REPORTER_TASK_HPP
+
+#include "MeasurementTask.hpp"
+#include "USART_Driver.hpp"
+
+class BluetoothReporterTask {
+public:
+void Execute();
+
+private:
+void ReportVoltage(float voltage);
+};
+
+#endif
+----
+BluetoothReporterTask.cpp
+[source,cpp]
+----
+#include "BluetoothReporterTask.hpp"
+#include "UartMailBox.hpp"
+#include "Formatter.hpp"
+#include "FreeRTOS.h"
+#include "task.h"
+
+void BluetoothReporterTask::Execute() {
+float voltage = 0.0f;
+
+for (;;) {
+if (UartMailBox::Receive(voltage, pdMS_TO_TICKS(100))) {
+ReportVoltage(voltage);
+}
+vTaskDelay(pdMS_TO_TICKS(10));
+}
+}
+
+void BluetoothReporterTask::ReportVoltage(float voltage) {
+char buffer[128];
+Formatter::Format(voltage, buffer, sizeof(buffer));
+USART2Driver::SendString(buffer);
+}
+----

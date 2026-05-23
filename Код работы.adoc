@@ -24,9 +24,13 @@ const int PRIORITY_VOLTAGE_READER = 3;
 const int PRIORITY_LED_INDICATOR = 2;
 const int PRIORITY_BLUETOOTH = 1;
 
-MeasurementTask measurementTask;
-LEDIndicatorTask ledIndicatorTask;
-BluetoothReporterTask bluetoothReporterTask;
+FilteredVoltage filter(0.095f);
+LedMailBox ledMailBox;
+UartMailBox uartMailBox;
+
+MeasurementTask measurementTask(filter, ledMailBox, uartMailBox);
+LEDIndicatorTask ledIndicatorTask(ledMailBox);
+BluetoothReporterTask bluetoothReporterTask(uartMailBox);
 
 extern "C" void MeasurementTaskWrapper(void *pvParameters) {
 measurementTask.Execute();
@@ -49,6 +53,9 @@ extern "C" void vApplicationIdleHook(void) {}
 int main() {
 USART2Driver::Init(9600);
 USART2Driver::SendString("System starting...\r\n");
+
+ledMailBox.Create();
+uartMailBox.Create();
 
 xTaskCreate(MeasurementTaskWrapper, "Measurement", STACK_SIZE_VOLTAGE_READER, NULL, PRIORITY_VOLTAGE_READER, NULL);
 xTaskCreate(LEDIndicatorTaskWrapper, "LEDIndicator", STACK_SIZE_LED_INDICATOR, NULL, PRIORITY_LED_INDICATOR, NULL);
@@ -74,6 +81,7 @@ public:
 static void Init();
 static uint16_t GetValue();
 
+private:
 static volatile uint32_t s_adcValue;
 };
 
@@ -95,9 +103,7 @@ void ADCDriver::Init() {
 RCC::AHB1ENR::GPIOAEN::Enable::Set();
 RCC::APB2ENR::ADC1EN::Enable::Set();
 RCC::AHB1ENR::DMA2EN::Enable::Set();
-
 GPIOA::MODER::MODER0::Analog::Set();
-
 DMA2::S0CR::EN::Value0::Set();
 DMA2::S0CR::CHSEL::Value0::Set();
 DMA2::S0CR::CIRC::Value1::Set();
@@ -108,7 +114,6 @@ DMA2::S0PAR::Write(ADC1::DR::Address);
 DMA2::S0M0AR::Write(reinterpret_cast<uint32_t>(&s_adcValue));
 DMA2::S0NDTR::Write(1);
 DMA2::S0CR::EN::Value1::Set();
-
 ADC1::CR1::RES::Bits12::Set();
 ADC1::CR1::SCAN::Enable::Set();
 ADC1::CR2::CONT::ContinuousConversion::Set();
@@ -117,7 +122,6 @@ ADC1::CR2::DDS::DMARequest::Set();
 ADC1::SQR1::L::Conversions1::Set();
 ADC1::SQR3::SQ1::Channel0::Set();
 ADC1::SMPR2::SMP0::Cycles84::Set();
-
 ADC1::CR2::ADON::Enable::Set();
 for (int i = 0; i < 1000; i++);
 ADC1::CR2::SWSTART::On::Set();
@@ -157,7 +161,6 @@ public:
 FilteredVoltage(float tau);
 void Update(float rawVoltage);
 float GetValue() const;
-void Reset();
 
 private:
 float m_tau;
@@ -186,11 +189,6 @@ m_filteredValue = m_filteredValue + (rawVoltage - m_filteredValue) * m_tau;
 
 float FilteredVoltage::GetValue() const {
 return m_filteredValue;
-}
-
-void FilteredVoltage::Reset() {
-m_firstSample = true;
-m_filteredValue = 0.0f;
 }
 ----
 VoltageRange.hpp
@@ -224,8 +222,10 @@ VoltageRange.cpp
 static const float LED_LEVEL_1 = 0.25f;
 static const float LED_LEVEL_2 = 0.50f;
 static const float LED_LEVEL_3 = 0.75f;
+
 VoltageRange VoltageRangeCalculator::Calculate(float voltage, float maxVoltage) {
 float percentage = voltage / maxVoltage;
+
 if (percentage >= LED_LEVEL_3) {
 return VoltageRange::LEVEL_3;
 } else if (percentage >= LED_LEVEL_2) {
@@ -276,12 +276,10 @@ LED_Driver.cpp
 void LEDDriver::Init() {
 RCC::AHB1ENR::GPIOAEN::Enable::Set();
 RCC::AHB1ENR::GPIOCEN::Enable::Set();
-
 GPIOA::MODER::MODER5::Output::Set();
 GPIOC::MODER::MODER5::Output::Set();
 GPIOC::MODER::MODER8::Output::Set();
 GPIOC::MODER::MODER9::Output::Set();
-
 SetAll(false);
 }
 
@@ -348,17 +346,13 @@ USART_Driver.cpp
 void USART2Driver::Init(uint32_t baudrate) {
 RCC::APB1ENR::USART2EN::Enable::Set();
 RCC::AHB1ENR::GPIOAEN::Enable::Set();
-
 GPIOA::MODER::MODER2::Alternate::Set();
 GPIOA::MODER::MODER3::Alternate::Set();
-
 GPIOA::AFRL::AFRL2::Af7::Set();
 GPIOA::AFRL::AFRL3::Af7::Set();
-
 uint32_t uartdiv = 16000000 / baudrate;
 USART2::BRR::DIV_Mantissa::Set(uartdiv >> 4);
 USART2::BRR::DIV_Fraction::Set(uartdiv & 0x0F);
-
 USART2::CR1::TE::Enable::Set();
 USART2::CR1::RE::Enable::Set();
 USART2::CR1::UE::Enable::Set();
@@ -408,38 +402,27 @@ typedef float LedMailBoxDataType;
 
 class LedMailBox {
 public:
-static void Create() {
-if (s_handle == nullptr) {
-s_handle = xQueueCreate(LED_MAILBOX_SIZE, sizeof(LedMailBoxDataType));
+void Create() {
+if (m_handle == nullptr) {
+m_handle = xQueueCreate(LED_MAILBOX_SIZE, sizeof(LedMailBoxDataType));
 }
 }
 
-static bool Send(const LedMailBoxDataType& value, TickType_t timeout = 0) {
-if (s_handle == nullptr) return false;
-return xQueueSend(s_handle, &value, timeout) == pdPASS;
+bool Send(const LedMailBoxDataType& value, TickType_t timeout = 0) {
+if (m_handle == nullptr) return false;
+return xQueueSend(m_handle, &value, timeout) == pdPASS;
 }
 
-static bool Receive(LedMailBoxDataType& value, TickType_t timeout = portMAX_DELAY) {
-if (s_handle == nullptr) return false;
-return xQueueReceive(s_handle, &value, timeout) == pdPASS;
-}
-
-static bool IsCreated() {
-return s_handle != nullptr;
+bool Receive(LedMailBoxDataType& value, TickType_t timeout = portMAX_DELAY) {
+if (m_handle == nullptr) return false;
+return xQueueReceive(m_handle, &value, timeout) == pdPASS;
 }
 
 private:
-static QueueHandle_t s_handle;
+QueueHandle_t m_handle = nullptr;
 };
 
 #endif
-----
-LedMailBox.cpp
-[source,cpp]
-----
-#include "LedMailBox.hpp"
-
-QueueHandle_t LedMailBox::s_handle = nullptr;
 ----
 UartMailBox.hpp
 [source,cpp]
@@ -456,38 +439,27 @@ typedef float UartMailBoxDataType;
 
 class UartMailBox {
 public:
-static void Create() {
-if (s_handle == nullptr) {
-s_handle = xQueueCreate(UART_MAILBOX_SIZE, sizeof(UartMailBoxDataType));
+void Create() {
+if (m_handle == nullptr) {
+m_handle = xQueueCreate(UART_MAILBOX_SIZE, sizeof(UartMailBoxDataType));
 }
 }
 
-static bool Send(const UartMailBoxDataType& value, TickType_t timeout = 0) {
-if (s_handle == nullptr) return false;
-return xQueueSend(s_handle, &value, timeout) == pdPASS;
+bool Send(const UartMailBoxDataType& value, TickType_t timeout = 0) {
+if (m_handle == nullptr) return false;
+return xQueueSend(m_handle, &value, timeout) == pdPASS;
 }
 
-static bool Receive(UartMailBoxDataType& value, TickType_t timeout = pdMS_TO_TICKS(100)) {
-if (s_handle == nullptr) return false;
-return xQueueReceive(s_handle, &value, timeout) == pdPASS;
-}
-
-static bool IsCreated() {
-return s_handle != nullptr;
+bool Receive(UartMailBoxDataType& value, TickType_t timeout = pdMS_TO_TICKS(100)) {
+if (m_handle == nullptr) return false;
+return xQueueReceive(m_handle, &value, timeout) == pdPASS;
 }
 
 private:
-static QueueHandle_t s_handle;
+QueueHandle_t m_handle = nullptr;
 };
 
 #endif
-----
-UartMailBox.cpp
-[source,cpp]
-----
-#include "UartMailBox.hpp"
-
-QueueHandle_t UartMailBox::s_handle = nullptr;
 ----
 MeasurementTask.hpp
 [source,cpp]
@@ -501,13 +473,13 @@ MeasurementTask.hpp
 
 class MeasurementTask {
 public:
-MeasurementTask();
+MeasurementTask(FilteredVoltage& filter, LedMailBox& ledMailBox, UartMailBox& uartMailBox);
 void Execute();
 
 private:
-FilteredVoltage m_filter;
-float m_lastRawVoltage;
-float m_lastFilteredVoltage;
+FilteredVoltage& m_filter;
+LedMailBox& m_ledMailBox;
+UartMailBox& m_uartMailBox;
 
 void ProcessVoltage(float rawVoltage);
 void InitTimer();
@@ -550,15 +522,10 @@ NVIC_ISER0 |= (1 << 28);
 TIM2::CR1::CEN::Enable::Set();
 }
 
-MeasurementTask::MeasurementTask()
-: m_filter(0.095f),
-m_lastRawVoltage(0.0f),
-m_lastFilteredVoltage(0.0f) {}
+MeasurementTask::MeasurementTask(FilteredVoltage& filter, LedMailBox& ledMailBox, UartMailBox& uartMailBox)
+: m_filter(filter), m_ledMailBox(ledMailBox), m_uartMailBox(uartMailBox) {}
 
 void MeasurementTask::Execute() {
-LedMailBox::Create();
-UartMailBox::Create();
-
 ADCDriver::Init();
 InitTimer();
 
@@ -574,18 +541,18 @@ uint16_t adcCode = ADCDriver::GetValue();
 float rawVoltage = VoltagePerevod::Convert(adcCode);
 ProcessVoltage(rawVoltage);
 
-LedMailBox::Send(m_lastFilteredVoltage);
-UartMailBox::Send(m_lastFilteredVoltage);
-}
-}
+float filteredVoltage = m_filter.GetValue();
 
+m_ledMailBox.Send(filteredVoltage);
+m_uartMailBox.Send(filteredVoltage);
+}
+}
 vTaskDelay(pdMS_TO_TICKS(10));
 }
 }
 
 void MeasurementTask::ProcessVoltage(float rawVoltage) {
 m_filter.Update(rawVoltage);
-m_lastFilteredVoltage = m_filter.GetValue();
 }
 ----
 LEDIndicatorTask.hpp
@@ -594,15 +561,18 @@ LEDIndicatorTask.hpp
 #ifndef LED_INDICATOR_TASK_HPP
 #define LED_INDICATOR_TASK_HPP
 
-#include "MeasurementTask.hpp"
+#include "LedMailBox.hpp"
 #include "VoltageRange.hpp"
 #include "LED_Driver.hpp"
 
 class LEDIndicatorTask {
 public:
+LEDIndicatorTask(LedMailBox& ledMailBox);
 void Execute();
 
 private:
+LedMailBox& m_ledMailBox;
+
 void UpdateLEDs(float voltage);
 };
 
@@ -612,18 +582,18 @@ LEDIndicatorTask.cpp
 [source,cpp]
 ----
 #include "LEDIndicatorTask.hpp"
-#include "LedMailBox.hpp"
-#include "VoltageRange.hpp"
-#include "LED_Driver.hpp"
 #include "FreeRTOS.h"
 #include "task.h"
+
+LEDIndicatorTask::LEDIndicatorTask(LedMailBox& ledMailBox)
+: m_ledMailBox(ledMailBox) {}
 
 void LEDIndicatorTask::Execute() {
 LEDDriver::Init();
 float voltage = 0.0f;
 
 for (;;) {
-if (LedMailBox::Receive(voltage, portMAX_DELAY)) {
+if (m_ledMailBox.Receive(voltage, portMAX_DELAY)) {
 UpdateLEDs(voltage);
 }
 vTaskDelay(pdMS_TO_TICKS(10));
@@ -643,14 +613,18 @@ BluetoothReporterTask.hpp
 #ifndef BLUETOOTH_REPORTER_TASK_HPP
 #define BLUETOOTH_REPORTER_TASK_HPP
 
-#include "MeasurementTask.hpp"
+#include "UartMailBox.hpp"
 #include "USART_Driver.hpp"
+#include "Formatter.hpp"
 
 class BluetoothReporterTask {
 public:
+BluetoothReporterTask(UartMailBox& uartMailBox);
 void Execute();
 
 private:
+UartMailBox& m_uartMailBox;
+
 void ReportVoltage(float voltage);
 };
 
@@ -660,16 +634,17 @@ BluetoothReporterTask.cpp
 [source,cpp]
 ----
 #include "BluetoothReporterTask.hpp"
-#include "UartMailBox.hpp"
-#include "Formatter.hpp"
 #include "FreeRTOS.h"
 #include "task.h"
+
+BluetoothReporterTask::BluetoothReporterTask(UartMailBox& uartMailBox)
+: m_uartMailBox(uartMailBox) {}
 
 void BluetoothReporterTask::Execute() {
 float voltage = 0.0f;
 
 for (;;) {
-if (UartMailBox::Receive(voltage, pdMS_TO_TICKS(100))) {
+if (m_uartMailBox.Receive(voltage, pdMS_TO_TICKS(100))) {
 ReportVoltage(voltage);
 }
 vTaskDelay(pdMS_TO_TICKS(10));
